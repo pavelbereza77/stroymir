@@ -1,0 +1,8 @@
+{% extends "oscar/base.html" %}
+{% load static %}
+
+{% block extrahead %}
+    {{ block.super }}  <!-- Важно! Сохраняем родительские стили -->
+    <!-- Подключаем наши стили -->
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}" type="text/css">
+{% endblock %}

@@ -1,0 +1,53 @@
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: stroymir
+      POSTGRES_USER: stroymir
+      POSTGRES_PASSWORD: stroymir # Пароль задаем здесь, как переменную окружения
+      POSTGRES_HOST_AUTH_METHOD: trust # Разрешаем подключения
+      POSTGRES_HOST: 0.0.0.0 # Слушаем все интерфейсы
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432" # Стандартный порт
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+  pgadmin:
+    image: dpage/pgadmin4:8.6
+    container_name: pgadmin
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+
+  solr:
+    image: solr:latest
+    container_name: solr
+    restart: unless-stopped
+    ports:
+      - "8983:8983"
+    volumes:
+      - ./solr-data:/var/solr/data
+    environment:
+      SOLR_HOME: /var/solr/data
+
+volumes:
+  pgdata: {}
+  redisdata: {}
+  pgadmin-data: {}
+  solr_data: {}
+    

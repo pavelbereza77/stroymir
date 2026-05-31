@@ -1,0 +1,15 @@
+/* Общие стили для адаптивного дизайна */
+.product-pod-title .product-title-link {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 1em;
+    max-width: 100%;
+}
+
+@media (max-width: 600px) {
+    .product-pod-title .product-title-link {
+        font-size: 0.8em;
+    }
+}
