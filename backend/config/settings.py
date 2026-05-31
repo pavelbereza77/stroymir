@@ -192,7 +192,10 @@ USE_TZ = True
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 MEDIA_URL = '/media/'
 
+# settings.py
 
+# Путь к дефолтному изображению товара
+DEFAULT_PRODUCT_IMAGE_PATH = os.path.join(MEDIA_ROOT, 'default_images', 'img_stroymir_default.webp')
 # MEDIA_ROOT = location("public/media")
 
 # # URL that handles the media served from MEDIA_ROOT. Make sure to use a

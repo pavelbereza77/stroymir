@@ -1,20 +1,29 @@
-# scripts/bulk_writer.py - ФИНАЛЬНАЯ ВЕРСИЯ
+# scripts/bulk_writer.py
 
+import logging
+import os
+from typing import List, Dict, Any
 from django.db import transaction
-from oscar.apps.catalogue.models import Product, ProductClass
+from django.db.utils import IntegrityError
+from django.conf import settings
+from django.core.files import File
+from oscar.apps.catalogue.models import Category, Product, ProductClass, ProductImage
 from oscar.apps.partner.models import Partner, StockRecord
 
 from scripts.validators import ProductValidator
 
+# Настройка логгирования
+logger = logging.getLogger(__name__)
 
 class BulkDBWriter:
-    """
-    Оптимизированный писатель, который корректно работает как на CREATE,
-    так и на UPDATE, решая проблему связи OneToMany.
-    """
+    # Кэшируем сущности на уровне класса
+    _partner_cache = None
+    _product_class_cache = None
+
     def __init__(self):
-        self.partner, _ = Partner.objects.get_or_create(name='Основной склад')
-        self.product_class, _ = ProductClass.objects.get_or_create(name='Товар')
+        # Получаем кэшированные сущности
+        self.partner = self._get_partner()
+        self.product_class = self._get_product_class()
         
         # Списки для товаров
         self.products_to_create = []
@@ -26,10 +35,31 @@ class BulkDBWriter:
         self.stocks_to_update = []   # Существующие записи, которые нужно обновить
         self.existing_stocks_map = {} # Кэш: {upc: stock_record_object}
 
-    def prepare(self, data_list):
-        """Готовит данные для записи."""
-        print("🗃️ Подготовка данных для массовой записи...")
+    @classmethod
+    def _get_partner(cls):
+        """Возвращает кэшированную сущность партнёра"""
+        if cls._partner_cache is None:
+            # Получаем или создаём партнёра один раз
+            cls._partner_cache, _ = Partner.objects.get_or_create(name='Основной склад')
+        return cls._partner_cache
 
+    @classmethod
+    def _get_product_class(cls):
+        """Возвращает кэшированную сущность категории товаров"""
+        if cls._product_class_cache is None:
+            # Получаем или создаём категорию один раз
+            cls._product_class_cache, _ = ProductClass.objects.get_or_create(name='Товар')
+        return cls._product_class_cache
+
+    def prepare(self, data_generator):
+        """
+        Подготовительный этап: превращаем генератор в список,
+        чтобы сохранить всю существующую функциональность.
+        """
+        # Преобразуем генератор в список
+        data_list = list(data_generator)
+
+        # Теперь работаем с data_list точно так же, как раньше
         if not data_list:
             return
 
@@ -48,12 +78,14 @@ class BulkDBWriter:
                 prod.is_public = is_public
                 self.products_to_update.append(prod)
             else:
+                default_image_path = getattr(settings, 'DEFAULT_PRODUCT_IMAGE_PATH', None)
                 prod = Product(
                     upc=product_record.upc,
                     title=product_record.title,
                     product_class=self.product_class,
                     is_public=is_public
                 )
+                prod.default_image_path = default_image_path 
                 self.products_to_create.append(prod)
 
         # --- ПОДГОТОВКА ДАННЫХ О СТОКАХ ---
@@ -97,14 +129,34 @@ class BulkDBWriter:
             'stocks_updated': len(self.stocks_to_update)
         }
 
-        print("\n🚀 Этап 1: Работа с товарами...")
+        # Логируем начало этапа
+        logger.info("🚀 Этап 1: Работа с товарами...")
+
+        # Пакетная вставка товаров (batch_size=1000)
         if self.products_to_create:
-            Product.objects.bulk_create(self.products_to_create)
-            print(f"✅ Создано новых товаров: {stats['products_created']}")
-        
+            try:
+                products_instances = Product.objects.bulk_create(self.products_to_create, batch_size=1000)
+                logger.info(f"✅ Создано новых товаров: {stats['products_created']}")
+                
+                # Привязываем товары к активной категории "Все товары"
+                self._assign_to_active_category(products_instances)
+
+                
+                # Загружаем дефолтные изображения
+                self._load_default_images(products_instances)
+
+            except IntegrityError as e:
+                logger.error(f"Ошибка при создании товаров: {e}")
+                raise
+
+        # Массивное обновление товаров
         if self.products_to_update:
-            Product.objects.bulk_update(self.products_to_update, ['title', 'is_public'])
-            print(f"🔄 Обновлено товаров: {stats['products_updated']}")
+            try:
+                Product.objects.bulk_update(self.products_to_update, ['title', 'is_public'], batch_size=1000)
+                logger.info(f"🔄 Обновлено товаров: {stats['products_updated']}")
+            except IntegrityError as e:
+                logger.error(f"Ошибка при обновлении товаров: {e}")
+                raise
 
         # Обновляем карту продуктов после создания новых, чтобы получить их ID
         if self.products_to_create:
@@ -112,13 +164,20 @@ class BulkDBWriter:
             for item in new_products:
                 self.existing_products_map[item.upc] = item
 
-        print("\n🚀 Этап 2: Работа с ценами и остатками...")
+        # Логируем начало следующего этапа
+        logger.info("\n🚀 Этап 2: Работа с ценами и остатками...")
+
+        # Пакетная обработка стоков
         stocks_batch = []
 
         # 1. Сначала обрабатываем обновления (UPDATE)
         if self.stocks_to_update:
-            StockRecord.objects.bulk_update(self.stocks_to_update, ['price', 'num_in_stock'])
-            print(f"💾 Обновлено записей о ценах/остатках: {stats['stocks_updated']}")
+            try:
+                StockRecord.objects.bulk_update(self.stocks_to_update, ['price', 'num_in_stock'], batch_size=1000)
+                logger.info(f"💾 Обновлено записей о ценах/остатках: {stats['stocks_updated']}")
+            except IntegrityError as e:
+                logger.error(f"Ошибка при обновлении стоков: {e}")
+                raise
 
         # 2. Затем создаем новые записи (CREATE)
         for info in self.stocks_to_create:
@@ -133,9 +192,46 @@ class BulkDBWriter:
             )
             stocks_batch.append(stock)
 
+        # Пакетная вставка стоков (batch_size=1000)
         if stocks_batch:
-            StockRecord.objects.bulk_create(stocks_batch)
-            print(f"➕ Создано записей о ценах/остатках: {stats['stocks_created']}")
+            try:
+                StockRecord.objects.bulk_create(stocks_batch, batch_size=1000)
+                logger.info(f"➕ Создано записей о ценах/остатках: {stats['stocks_created']}")
+            except IntegrityError as e:
+                logger.error(f"Ошибка при создании стоков: {e}")
+                raise
 
-        print("🏁 Массовая синхронизация завершена.")
+        logger.info("🏁 Массовая синхронизация завершена.")
         return stats
+
+    def _load_default_images(self, products_instances):
+        """Загружает дефолтные изображения для новых товаров"""
+        for product_instance, product_record in zip(products_instances, self.products_to_create):
+            if hasattr(product_record, 'default_image_path') and product_record.default_image_path and os.path.exists(product_record.default_image_path):
+                # Читаем файл изображения
+                with open(product_record.default_image_path, 'rb') as img_file:
+                    # Создаем объект изображения
+                    image_obj = ProductImage(
+                        product=product_instance,
+                        original=File(img_file, name='default_image.webp'),
+                        caption=f"Дефолтное изображение для {product_record.title}"
+                    )
+                    
+                    # Сохраняем изображение в базе данных
+                    image_obj.save()
+                    logger.info(f"📸 Загружено дефолтное изображение для товара: {product_record.title}")
+            else:
+                logger.warning(f"❗ Изображение не найдено для товара: {product_record.title}")
+    
+    def _assign_to_active_category(self, products_instances):
+        """Присваивает товары активной категории 'Все товары'"""
+        # Находим или создаём активную категорию "Все товары"
+        category_name = 'Все товары'
+        category, created = Category.objects.get_or_create(name=category_name)
+
+        # Привязываем товары к категории и сохраняем изменения
+        for product_instance in products_instances:
+            product_instance.categories.add(category)
+            product_instance.save()  # Важно! Сохраняем изменения в базе данных
+
+        logger.info(f"Товары успешно привязаны к категории '{category_name}'")
