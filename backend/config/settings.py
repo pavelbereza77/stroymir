@@ -12,6 +12,9 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import os
 from pathlib import Path
 from oscar.defaults import *
+from oscar.defaults import _
+
+
 
 location = lambda x: os.path.join(
     os.path.dirname(os.path.realpath(__file__)), x)
@@ -232,12 +235,59 @@ AUTHENTICATION_BACKENDS = (
  'oscar.apps.customer.auth_backends.EmailBackend',
  'django.contrib.auth.backends.ModelBackend',
 )
+
+
+# Настройки Haystack для поиска
+HAYSTACK_CONNECTIONS = {
+    'default': {
+        'ENGINE': 'haystack.backends.solr_backend.SolrEngine',
+        'URL': 'http://localhost:8983/solr/oscar_stroymir',
+        'TIMEOUT': 60 * 5,
+        'INCLUDE_SPELLING': True,
+    }
+}
+
+# Дополнительные настройки для производительности
 HAYSTACK_SIGNAL_PROCESSOR = 'haystack.signals.RealtimeSignalProcessor'
+HAYSTACK_SEARCH_RESULTS_PER_PAGE = 20
+
+# Настройки для индексации
+HAYSTACK_AUTO_UPDATE = True
+HAYSTACK_BATCH_SIZE = 100
+
+OSCAR_FACETS = {
+    'price': {
+        'name': _('Price Range'),
+        'field': 'price_exact',
+        'queries': [
+            ('under_50', {'price_exact__lte': 50}),
+            ('50_to_100', {'price_exact__gte': 50, 'price_exact__lte': 100}),
+            ('over_100', {'price_exact__gt': 100}),
+        ],
+    },
+    'categories': {
+        'name': _('Categories'),
+        'field': 'categories_exact',
+        'queries': [],  # Django Oscar автоматически построит фильтры по категориям
+    },
+    'availability': {
+        'name': _('Availability'),
+        'field': 'in_stock_exact',
+        'queries': [
+            ('in_stock', {'in_stock_exact': True}),
+            ('out_of_stock', {'in_stock_exact': False}),
+        ],
+    },
+}
+
+OSCAR_SEARCH_FACET_COUNT = 10
+
+# HAYSTACK_SIGNAL_PROCESSOR = 'haystack.signals.RealtimeSignalProcessor'
 
 # HAYSTACK_CONNECTIONS = {
 #     'default': {
 #         'ENGINE': 'haystack.backends.solr_backend.SolrEngine',
-#         'URL': 'http://localhost:8983/solr/mycore/',
+#         'URL': 'http://localhost:8983/solr/stroymir/',
 #         'INCLUDE_SPELLING': True,
 #     },
 # }
@@ -247,18 +297,18 @@ HAYSTACK_SIGNAL_PROCESSOR = 'haystack.signals.RealtimeSignalProcessor'
 # HAYSTACK_CONNECTIONS = {
 #     'default': {
 #         'ENGINE': 'haystack.backends.solr_backend.SolrEngine',
-#         'URL': 'http://127.0.0.1:8983/solr/sandbox',
+#         'URL': 'http://localhost:8983/solr/oscar',
 #         'ADMIN_URL': 'http://127.0.0.1:8983/solr/admin/cores',
 #         'INCLUDE_SPELLING': True,
 #     }
 # }
-HAYSTACK_CONNECTIONS = {
-    'default': {
-        'ENGINE': 'haystack.backends.whoosh_backend.WhooshEngine',
-        'PATH': location('whoosh_index'),
-        'INCLUDE_SPELLING': True,
-    },
-}
+# HAYSTACK_CONNECTIONS = {
+#     'default': {
+#         'ENGINE': 'haystack.backends.whoosh_backend.WhooshEngine',
+#         'PATH': location('whoosh_index'),
+#         'INCLUDE_SPELLING': True,
+#     },
+# }
 
 # HAYSTACK_CONNECTIONS = {
 #     'default': {
@@ -269,3 +319,9 @@ HAYSTACK_CONNECTIONS = {
 OSCAR_DEFAULT_CURRENCY = 'RUB'
 OSCAR_ALLOW_ANON_CHECKOUT = True
 # OSCAR_PRODUCT_TITLE_MAX_LENGTH = 10
+# OSCAR_SEARCH_FACETS = {
+#     'text': {
+#         'name': _('Текст'),
+#         'field': 'text',
+#     }
+# }
